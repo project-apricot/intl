@@ -1,0 +1,5 @@
+{
+  "title": "Intl",
+  "description": "Message localization for .NET, with ASP.NET Core integration.",
+  "pages": ["index", "usage", "aspnetcore"]
+}

@@ -1,0 +1,163 @@
+---
+title: ASP.NET Core
+description: Dependency-injection wiring, request locale resolution and JSON translation sources.
+---
+
+# ASP.NET Core
+
+`ApricotFramework.Intl.AspNetCore` wires the core up for a web application. Every public type,
+including the `IServiceCollection` extension methods, lives in the `ApricotFramework.Intl.AspNetCore`
+namespace, so one `using` brings in the whole package.
+
+## Registration
+
+```csharp
+using ApricotFramework.Intl.AspNetCore;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddIntlCore(builder.Configuration);
+
+builder.Services.AddJsonTranslationSource("en-US", () => File.OpenRead("Translations/all.en.json"));
+builder.Services.AddJsonTranslationSource("hy-AM", () => File.OpenRead("Translations/all.hy.json"));
+```
+
+`AddIntlCore` binds `IntlSettings` from the `Intl` configuration section, adds
+`IHttpContextAccessor`, and registers `DefaultLocaleAccessor`, `InMemoryTranslationStore` and
+`DefaultIntlService` as singletons.
+
+> **Note.** Registration order does not matter. Translation sources are collected as an
+> `IEnumerable<ITranslationSource>` when the store is first constructed from the built container, so
+> sources registered before and after `AddIntlCore` are equally visible — all that matters is that
+> they are registered before the container is built.
+
+Those three services are registered with `TryAdd`, which means `AddIntlCore` never replaces one you
+registered yourself, and calling it twice is harmless. It does **not** impose an ordering: because
+the container resolves the last registration for a single service, an override registered after
+`AddIntlCore` also wins. Registering before is marginally tidier — `TryAdd` then no-ops and the
+collection holds only your registration, so `GetServices<T>()` does not also return the unused
+default.
+
+## Configuration
+
+```json
+{
+  "Intl": {
+    "FallbackLocale": "en-US"
+  }
+}
+```
+
+`FallbackLocale` is the only setting. When it is unset or blank, `en-US` is used.
+
+## Locale resolution
+
+`DefaultLocaleAccessor` resolves the locale for the current request in this order:
+
+1. The request culture published by ASP.NET's localization middleware, as
+   `IRequestCultureFeature`, when its culture name is non-blank.
+2. The `locale` query-string value.
+3. Otherwise null, so the fallback locale applies. This includes the case where there is no
+   active request at all.
+
+Add `UseRequestLocalization` and step 1 takes over. Omit it and the `?locale=` query string drives
+resolution, which is what the bundled example does.
+
+> **Note.** The invariant culture has an empty name rather than a null one, so a request culture of
+> invariant counts as *not resolved* and resolution continues to the query string.
+
+To replace resolution entirely, implement `ILocaleAccessor` and register it:
+
+```csharp
+builder.Services.AddLocaleAccessor<MyLocaleAccessor>();
+builder.Services.AddIntlCore(builder.Configuration);
+```
+
+## JSON translation sources
+
+`AddJsonTranslationSource` reads a **flat** JSON object of string values:
+
+```json
+{
+  "messages.hello": "Hello",
+  "messages.welcome": "Welcome, {name}!"
+}
+```
+
+Nested objects are not supported. The stream supplier is invoked exactly once, during registration,
+and the stream is disposed before the call returns. Reading is eager, so malformed JSON fails at
+startup rather than on first use.
+
+## Registration methods
+
+| Method | Registers |
+| --- | --- |
+| `AddIntlCore(configuration)` | Settings, `IHttpContextAccessor` and the three defaults, via `TryAdd` so your own registrations are never replaced. |
+| `AddLocaleAccessor<T>()` / `AddLocaleAccessor(instance)` | A custom `ILocaleAccessor`. |
+| `AddTranslationStore<T>()` / `AddTranslationStore(instance)` | A custom `ITranslationStore`. |
+| `AddTranslationSource<T>()` / `AddTranslationSource(instance)` | A custom `ITranslationSource`. |
+| `AddIntlService<T>()` / `AddIntlService(instance)` | A custom `IIntlService`. |
+| `AddJsonTranslationSource(locale, supplier)` | A `StaticTranslationSource` read from JSON. |
+| `AddIntlStringLocalization()` | `IStringLocalizer`, `IStringLocalizer<T>` and `IStringLocalizerFactory` over intl. |
+
+## Framework localization
+
+`AddIntlStringLocalization()` points ASP.NET Core's own localization abstractions at intl, so
+anything that localizes through the framework reads from your translation sources instead of `.resx`
+satellite assemblies:
+
+```csharp
+builder.Services.AddIntlCore(builder.Configuration);
+builder.Services.AddJsonTranslationSource("en-US", () => File.OpenRead("Translations/all.en.json"));
+
+builder.Services.AddIntlStringLocalization();
+```
+
+That registers `IStringLocalizer`, `IStringLocalizer<T>` and `IStringLocalizerFactory`. Since the
+framework's consumers reach their localizer through the factory, this is enough to redirect Razor's
+`@Localizer["id"]` (with `AddViewLocalization()`) and DataAnnotations validation messages (with
+`AddDataAnnotationsLocalization()`).
+
+> **Warning.** Call it **after** `AddLocalization()` if you call that at all. `AddLocalization` claims
+> `IStringLocalizerFactory` with `TryAdd`, so registering intl's factory first would leave the `.resx`
+> one in place. Registering after appends, and the container resolves the last registration.
+
+### Positional arguments
+
+The `IStringLocalizer` indexer takes an `object[]`, so arguments are addressed **by position** and
+templates used through it take `{0}`, `{1}` placeholders:
+
+```csharp
+// "validation.required": "The {0} field is required."
+localizer["validation.required", "Email"];   // The Email field is required.
+```
+
+This is the shape DataAnnotations and `.resx` resources already use — `{0}` is the display name of the
+member being validated. Named `{placeholder}` templates keep working through `IIntlService`; they just
+cannot be addressed through an interface that only carries an untyped array.
+
+### What the type argument does
+
+Nothing. `IStringLocalizer<T>` uses `T` to select a resource file in a `.resx` world; message ids here
+are one flat namespace, so `IStringLocalizer<A>["x"]` and `IStringLocalizer<B>["x"]` resolve to the
+same message. Scope your ids instead — `"account.signin.title"` rather than `"title"`.
+
+### Misses
+
+`LocalizedString.ResourceNotFound` is honest, because the bridge resolves through `FormatOrNull` rather
+than `Format`. A message whose value genuinely equals its own id is reported as found;
+an absent id is reported as missing.
+
+`SearchedLocation` carries the locale that was resolved for the request, which is usually what you want
+when working out why a lookup missed.
+
+### Locale
+
+The locale comes from `IIntlService.GetCurrentLocale()` — so `ILocaleAccessor` — rather than from
+`CultureInfo.CurrentUICulture`. That guarantees `@Localizer["x"]` and `intl.Format("x")` never disagree
+inside one request. With `UseRequestLocalization` registered the two agree anyway, since
+`DefaultLocaleAccessor` reads the same request culture that middleware sets.
+
+## Not included
+
+There is no middleware, no `IRequestCultureProvider` implementation and no model binder.
