@@ -1,0 +1,5 @@
+{
+  "messages.hello": "Hello",
+  "messages.welcome": "Welcome, {name}!",
+  "validation.required": "The {0} field is required."
+}

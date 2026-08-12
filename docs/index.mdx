@@ -1,0 +1,48 @@
+---
+title: Intl
+description: Message localization for .NET, with ASP.NET Core integration.
+---
+
+# Intl
+
+Look a message up by id for a locale, and substitute named placeholders into it. Translations
+come from sources you supply, so nothing is assumed about where they live.
+
+The library ships as two packages:
+
+| Package | What it is |
+| --- | --- |
+| `ApricotFramework.Intl` | The **zero-dependency** core: abstractions plus in-memory implementations. |
+| `ApricotFramework.Intl.AspNetCore` | Dependency-injection wiring, request-based locale resolution, JSON translation sources, and an `IStringLocalizer` bridge. |
+
+Both release together on a single version, so the two are always in step.
+
+## Install
+
+For a plain .NET library or console application:
+
+```bash
+dotnet add package ApricotFramework.Intl
+```
+
+For an ASP.NET Core application, install the integration package — it brings the core with it:
+
+```bash
+dotnet add package ApricotFramework.Intl.AspNetCore
+```
+
+## The model
+
+Four abstractions, each with a small default implementation:
+
+- **`ITranslationSource`** — a bag of `id` to template pairs for one locale. Several sources may
+  contribute to the same locale.
+- **`ITranslationStore`** — resolves a template for an `(id, locale)` pair, or lists every template
+  for a locale. `InMemoryTranslationStore` flattens every source into memory once, at construction.
+- **`ILocaleAccessor`** — supplies the ambient locale and the fallback locale.
+- **`IIntlService`** — the consumer-facing entry point: `Format`, `FormatOrNull`, `GetCurrentLocale`
+  and `GetAllTemplates`.
+
+> **Note.** This is deliberately not ICU MessageFormat. There is no pluralization, no
+> select/ordinal handling, and no number or date formatting — only named placeholder
+> substitution. If you need full ICU semantics, this is not the library for it.

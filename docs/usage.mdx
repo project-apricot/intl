@@ -1,0 +1,170 @@
+---
+title: Usage
+description: Resolving and formatting messages, and the resolution rules that govern it.
+---
+
+# Usage
+
+## Formatting a message
+
+`IIntlService` has two `Format` overloads — one taking an explicit locale, one using the ambient
+locale from `ILocaleAccessor`.
+
+```csharp
+using ApricotFramework.Intl;
+
+var store = new InMemoryTranslationStore(
+[
+    new StaticTranslationSource("en-US", new Dictionary<string, string>
+    {
+        ["messages.hello"] = "Hello",
+        ["messages.welcome"] = "Welcome, {name}!",
+    }),
+]);
+
+var intl = new DefaultIntlService(store, localeAccessor);
+
+intl.Format("messages.hello", "en-US");   // "Hello"
+intl.Format("messages.hello");            // ambient locale
+```
+
+## Placeholders
+
+Placeholders are named and written `{name}`. Values come from the `args` dictionary and are
+converted with `ToString()`; a null value becomes an empty string.
+
+```csharp
+intl.Format("messages.welcome", new Dictionary<string, object?> { ["name"] = "Apricot" });
+// "Welcome, Apricot!"
+```
+
+A placeholder with no matching argument is left in the output verbatim, and an argument with no
+matching placeholder is ignored. Neither is an error.
+
+> **Note.** The template is scanned once, left to right, and substituted values are never rescanned.
+> A value that itself contains `{name}` is therefore inserted literally rather than expanded, so
+> argument values cannot inject placeholders, and the result never depends on the order in which the
+> argument dictionary enumerates.
+
+Precisely, a placeholder is an opening brace, a run of characters containing neither brace, and a
+closing brace. Anything else is literal text:
+
+| Template | Result with `name` = `Davit` |
+| --- | --- |
+| `Hello {name}` | `Hello Davit` |
+| `Hello {other}` | `Hello {other}` — unknown key survives |
+| `Hello {name` | `Hello {name` — never closed |
+| `Hello name}` | `Hello name}` — unmatched closing brace |
+| `Hello {}` | `Hello {}` — empty key matches nothing |
+| `{outer{name}` | `{outerDavit` — the second brace ends the candidate key |
+
+There is no escape sequence for a literal brace. Since an unknown key survives verbatim, a brace run
+that is not a real placeholder passes through unchanged, which covers most cases in practice.
+
+## Resolution order
+
+`Format` resolves in this order, and the result is never null:
+
+1. The requested locale. When it is null or whitespace, the fallback locale is used instead.
+2. Progressively less specific forms of the requested locale.
+3. The fallback locale, from `ILocaleAccessor.GetFallbackLocale()`.
+4. Progressively less specific forms of the fallback locale.
+5. The `fallback` argument, when one was supplied.
+6. The message `id` itself.
+
+Steps 5 and 6 mean a missing translation degrades to something printable rather than throwing.
+Passing `fallback` is how you control what that is.
+
+## Locale matching
+
+Locale names are matched **case-insensitively**, so `en-us`, `en-US` and `EN-US` are the same locale,
+and sources registered under two spellings merge into one.
+
+A locale that has no entry is retried without its last subtag, repeatedly, before the fallback locale
+is considered. So requesting `hy-AM` with a fallback of `en-US` probes:
+
+```
+hy-AM  ->  hy  ->  en-US  ->  en
+```
+
+**A matching language always beats the fallback language.** Registering only `hy` still serves
+Armenian to a request for `hy-AM`, rather than falling through to English — which matters, because
+ASP.NET's request culture gives you region-qualified names like `hy-AM` even when your translation
+files are organised by language.
+
+Less specific forms are derived by trimming at the last `-`, with no `CultureInfo` involved. That
+keeps resolution identical on every platform and in globalization-invariant mode, and it works for
+tags .NET does not know. The one place it differs from `CultureInfo.Parent`: `zh-TW` trims to `zh`,
+where `CultureInfo` would route it through `zh-Hant`.
+
+Duplicates are dropped, so a store is never asked about the same locale twice in one call. Requesting
+`en-GB` with an `en-US` fallback probes `en-GB`, `en`, `en-US` — three lookups, not four.
+
+> **Note.** A hit on the requested locale costs exactly one lookup and allocates nothing; the wider
+> chain is only built on a miss. If you implement `ITranslationStore` over something remote, cache
+> accordingly — a miss can mean several lookups.
+
+Message ids, unlike locales, stay **case-sensitive**: `messages.Hello` and `messages.hello` are
+different messages.
+
+## Telling a miss from a hit
+
+`Format` never fails — it degrades to the `fallback` argument, then to the id. That is what you want
+for rendering, but it means you cannot tell a missing translation from one that happens to equal its
+own id. `FormatOrNull` returns null instead:
+
+```csharp
+var value = intl.FormatOrNull("messages.hello", "hy-AM");
+
+if (value is null)
+{
+    // genuinely untranslated - log it, count it, flag it
+}
+```
+
+Resolution is otherwise identical, and `Format` is defined in terms of `FormatOrNull`, so the two
+cannot disagree. Note that `locale` is required here rather than optional — pass `GetCurrentLocale()`
+to format for the locale in effect, or null to use the fallback locale.
+
+## Reading a whole locale
+
+`GetAllTemplates` returns every template that would resolve for a locale:
+
+```csharp
+// everything a hy-AM caller would see, with gaps filled from hy, then en-US, then en
+var catalog = intl.GetAllTemplates("hy-AM");
+
+// only what hy-AM itself defines
+var own = intl.GetAllTemplates("hy-AM", includeFallbacks: false);
+```
+
+The main use is handing a locale's messages to a client — serialising them for a browser so the
+front end can format without a round trip. The second form is useful for coverage reporting: compare
+each locale's own keys against the fallback locale's to find what is untranslated.
+
+With `includeFallbacks` left true, every entry is exactly what `Format` would return for that id, so
+the catalog and individual lookups can never drift.
+
+> **Note.** `ITranslationStore` has a matching `GetAllTemplates(locale)` for exact-locale enumeration.
+> If you implement the interface over a remote system, this is the member that may be expensive —
+> the service calls it once per locale in the chain.
+
+## Overload ambiguity
+
+The two `Format` overloads differ only in their second parameter, so an explicit null there is
+ambiguous and will not compile:
+
+```csharp
+intl.Format("messages.hello", null);              // error CS0121: ambiguous
+intl.Format("messages.hello", locale: null);      // fine
+intl.Format("messages.hello", args: null);        // fine
+```
+
+## Merging sources
+
+Several sources may declare the same locale; `InMemoryTranslationStore` merges them. Where two
+sources define the same `id` for the same locale, **the last one enumerated wins** — with DI, that
+is registration order.
+
+Sources are read once, when the store is constructed. Adding a source afterwards has no effect on
+an already-built store.

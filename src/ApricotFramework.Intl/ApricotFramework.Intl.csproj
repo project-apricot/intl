@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Zero-dependency message localization primitives for .NET: locale-aware message lookup with named placeholder substitution, over pluggable translation sources and stores.</Description>
+    <PackageTags>localization;i18n;intl;globalization;translation;messages</PackageTags>
+  </PropertyGroup>
+
+</Project>

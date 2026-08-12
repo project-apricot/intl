@@ -1,0 +1,5 @@
+{
+  "messages.hello": "Բարև",
+  "messages.welcome": "Բարի գալուստ, {name}:",
+  "validation.required": "{0} դաշտը պարտադիր է:"
+}
