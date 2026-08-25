@@ -49,4 +49,4 @@ built.
 Locale names are matched case-insensitively, and a locale with no entry is retried without its last
 subtag before the fallback locale is tried — so `hy-AM` resolves against `hy` if that is what you
 registered, and a matching language always beats the fallback language. See the
-[documentation](https://projectapricot.dev) for the full resolution order.
+[documentation](https://projectapricot.dev/docs/intl) for the full resolution order.

@@ -49,14 +49,14 @@ matching placeholder is ignored. Neither is an error.
 Precisely, a placeholder is an opening brace, a run of characters containing neither brace, and a
 closing brace. Anything else is literal text:
 
-| Template | Result with `name` = `Davit` |
+| Template | Result with `name` = `John` |
 | --- | --- |
-| `Hello {name}` | `Hello Davit` |
+| `Hello {name}` | `Hello John` |
 | `Hello {other}` | `Hello {other}` — unknown key survives |
 | `Hello {name` | `Hello {name` — never closed |
 | `Hello name}` | `Hello name}` — unmatched closing brace |
 | `Hello {}` | `Hello {}` — empty key matches nothing |
-| `{outer{name}` | `{outerDavit` — the second brace ends the candidate key |
+| `{outer{name}` | `{outerJohn` — the second brace ends the candidate key |
 
 There is no escape sequence for a literal brace. Since an unknown key survives verbatim, a brace run
 that is not a real placeholder passes through unchanged, which covers most cases in practice.
